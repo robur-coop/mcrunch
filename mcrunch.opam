@@ -1,0 +1,22 @@
+opam-version: "2.0"
+name:         "hxd"
+maintainer:   "Romain Calascibetta <romain.calascibetta@gmail.com>"
+authors:      "Romain Calascibetta <romain.calascibetta@gmail.com>"
+homepage:     "https://github.com/robur-coop/mcrunch"
+bug-reports:  "https://github.com/robur-coop/mcrunch/issues"
+dev-repo:     "git+https://github.com/robur-coop/mcrunch.git"
+doc:          "https://robur-coop.github.io/mcrunch/"
+license:      "MIT"
+synopsis:     "A simple program to crunch files into an OCaml module"
+build: [
+  [ "dune" "build" "-p" name "-j" jobs ]
+  [ "dune" "runtest" "-p" name "-j" jobs ]
+]
+depends: [
+  "ocaml"             {>= "4.08.0"}
+  "dune"              {>= "2.7"}
+  "dune-configurator" {>= "2.7"}
+  "cmdliner"          {>= "1.1.0"}
+  "hxd"               {>= "0.3.6"}
+]
+x-maintenance-intent: [ "(latest)" ]

@@ -1,0 +1,4 @@
+(executable
+ (name mcrunch)
+ (public_name mcrunch)
+ (libraries logs.cli logs.fmt cmdliner fmt fmt.cli fmt.tty fpath hxd.core hxd.string))
