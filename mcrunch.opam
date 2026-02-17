@@ -15,7 +15,6 @@ build: [
 depends: [
   "ocaml"             {>= "4.08.0"}
   "dune"              {>= "2.7"}
-  "dune-configurator" {>= "2.7"}
   "cmdliner"          {>= "1.1.0"}
   "hxd"               {>= "0.3.6"}
 ]
