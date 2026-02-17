@@ -2,9 +2,9 @@
 
 `mcrunch` is a command-line tool that embeds files into OCaml source code. It
 reads one or more files and produces an OCaml module where each file's contents
-are encoded as a hexadecimal string array (or list). The generated module can be
-statically linked into an OCaml program, giving it access to the file contents
-at runtime without any I/O operations.
+are encoded as a hexadecimal string array (or list or a single string). The
+generated module can be statically linked into an OCaml program, giving it
+access to the file contents at runtime without any I/O operations.
 
 This is useful for embedding static assets (configuration files, templates,
 certificates, binary data) directly into an OCaml binary.
@@ -53,6 +53,8 @@ $ mcrunch -f -:path:to:file
   is the default.
 * `-l`, `--list` serializes each file's contents as a list of strings instead of
   an array.
+* `-s`, `--string` serializes each file's contents as a single string instead
+  of an array of strings.
 * `-c`, `--cols COLS` sets the number of octets per line in the hex output.
   Default is 16, maximum is 256.
 * `-u` uses uppercase hex letters instead of the default lowercase.
@@ -62,6 +64,14 @@ $ mcrunch -f -:path:to:file
 ```bash
 $ mcrunch -f foo.txt --with-comments
 let foo_txt = [| "\x66\x6f\x6f\x0a" |]                                                 (* foo.             *)
+```
+
+Note that comments are not supported for `--string` output. A warning is printed on stderr:
+
+```shell
+mcrunch --string --with-comments -f foo.txt
+$ Comments are not supported for string output. Not outputting comments.
+let foo_txt = "\x66\x6f\x6f\x0a"
 ```
 
 ## Example
