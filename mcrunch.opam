@@ -13,10 +13,12 @@ build: [
   [ "dune" "runtest" "-p" name "-j" jobs ]
 ]
 depends: [
-  "ocaml"             {>= "4.08.0"}
+  "ocaml"             {>= "5.1.0"}
   "dune"              {>= "2.7"}
-  "dune-configurator" {>= "2.7"}
   "cmdliner"          {>= "1.1.0"}
   "hxd"               {>= "0.3.6"}
+  "fpath"
+  "logs"
+  "fmt"
 ]
 x-maintenance-intent: [ "(latest)" ]
