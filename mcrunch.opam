@@ -16,9 +16,9 @@ depends: [
   "ocaml"             {>= "5.1.0"}
   "dune"              {>= "2.7"}
   "cmdliner"          {>= "1.1.0"}
-  "hxd"               {>= "0.3.6"}
   "fpath"
   "logs"
   "fmt"
+  "hxd"               {>= "0.4.0"}
 ]
 x-maintenance-intent: [ "(latest)" ]

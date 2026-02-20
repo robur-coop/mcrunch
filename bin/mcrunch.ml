@@ -206,7 +206,8 @@ let docs_hexdump = "HEX OUTPUT"
 
 let with_comments =
   let doc =
-    "Print a human-readable view of each line of the contents as a comment."
+    "Print a human-readable view of each line of the contents as a comment. \
+     Not supported for string output."
   in
   let open Arg in
   value & flag & info [ "with-comments" ] ~doc ~docs:docs_hexdump
@@ -234,7 +235,10 @@ let kind =
   let list =
     info [ "l"; "list" ] ~doc:"Serialize the contents to a list of strings."
   in
-  value & vflag `Array [ (`Array, array); (`List, list) ]
+  let string =
+    info [ "s"; "string" ] ~doc:"Serialize the contents to a single string."
+  in
+  value & vflag `Array [ (`Array, array); (`List, list) ; (`String, string) ; ]
 
 let uppercase =
   let doc = "Use upper case hex letters. Default is lower case." in
@@ -242,7 +246,13 @@ let uppercase =
   value & flag & info [ "u" ] ~doc ~docs:docs_hexdump
 
 let setup_hxd with_comments cols uppercase kind =
-  Hxd.caml ~with_comments ?cols ~uppercase kind
+  match kind with
+  | `Array | `List as kind -> Hxd.caml ~with_comments ?cols ~uppercase kind
+  | `String ->
+    if with_comments then
+      Printf.eprintf "Comments are not supported for string output. \
+                      Not outputting comments.\n%!";
+    Hxd.caml_string ?cols ~uppercase ()
 
 let setup_hxd =
   let open Term in
