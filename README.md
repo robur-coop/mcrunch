@@ -66,11 +66,12 @@ $ mcrunch -f foo.txt --with-comments
 let foo_txt = [| "\x66\x6f\x6f\x0a" |]                                                 (* foo.             *)
 ```
 
-Note that comments are not supported for `--string` output. A warning is printed on stderr:
+Note that comments are not supported for `--string` output. A warning is printed
+on stderr:
 
-```shell
-mcrunch --string --with-comments -f foo.txt
-$ Comments are not supported for string output. Not outputting comments.
+```bash
+$ mcrunch --string --with-comments -f foo.txt
+Comments are not supported for string output. Not outputting comments.
 let foo_txt = "\x66\x6f\x6f\x0a"
 ```
 
@@ -79,7 +80,7 @@ let foo_txt = "\x66\x6f\x6f\x0a"
 Given two files `index.html` and `style.css`, you can generate an OCaml module
 that embeds both:
 
-```
+```bash
 $ mcrunch -f index.html -f style.css -o static.ml
 ```
 
