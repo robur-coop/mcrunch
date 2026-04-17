@@ -17,11 +17,12 @@ module Sched = Hxd.Make (struct type +'a t = 'a end)
 let sched = { Hxd.bind= (fun x fn -> fn (Sched.prj x)); return= Sched.inj }
 let lseek = { Hxd.lseek= (fun _ _ _ -> Sched.inj (Ok 0)) }
 
-let pp cfg digest ppf filename =
+let pp cfg (module Hash : Digestif.S) out ppf filename =
   let ic = open_in_bin filename in
   let finally () = close_in ic in
   Fun.protect ~finally @@ fun () ->
   let max = in_channel_length ic in
+  let dgst = ref (Hash.init ()) in
   if max > 0xffff (* 65535 *)
   then
     let pp ppf () =
@@ -29,17 +30,15 @@ let pp cfg digest ppf filename =
         let len = Int.min (max - !pos) len in
         let len = input ic buf off len in
         pos := !pos + len;
-        Option.iter (fun dgst ->
-            dgst := Digestif.SHA256.feed_bytes !dgst
-                ~off ~len buf)
-          digest;
+        dgst := Hash.feed_bytes !dgst
+            ~off ~len buf;
         Sched.inj (Ok len) in
       let send _ _ ~off:_ ~len = Sched.inj (Ok len) in
       let seek = `Relative 0 in
       let v = Hxd.generate cfg sched recv send (ic, ref 0) () lseek seek ppf in
       match Sched.prj v with
-      | Ok () -> ()
-      | Error _ -> () in
+      | Ok () -> Option.iter (fun out -> out := Hash.get !dgst|> Hash.to_raw_string) out
+      | Error _ -> Option.iter (fun out -> out := Hash.get !dgst|> Hash.to_raw_string) out in
     Fmt.pf ppf "@[<hov>%a@]" pp ()
   else
     let tmp = Bytes.create 0x7ff in
@@ -53,13 +52,12 @@ let pp cfg digest ppf filename =
       | exception End_of_file -> Buffer.contents buf
     in
     let str = go () in
-    Option.iter (fun dgst ->
-        dgst := Digestif.SHA256.feed_string !dgst
-            str)
-      digest;
+    dgst := Hash.feed_string !dgst
+        str;
+    Option.iter (fun out -> out := Hash.get !dgst|> Hash.to_raw_string) out;
     Fmt.pf ppf "@[<hov>%a@]" (Hxd_string.pp cfg) str
 
-let run _quiet cfg filenames output sha256checksums =
+let run _quiet cfg filenames output checksums =
   let ppf_finally_of_filename filename =
     let oc = open_out_bin filename in
     let ppf = Format.formatter_of_out_channel oc in
@@ -71,8 +69,8 @@ let run _quiet cfg filenames output sha256checksums =
     | None -> (Fmt.stdout, ignore)
     | Some filename -> ppf_finally_of_filename filename
   in
-  let ppf', finally' =
-    match sha256checksums with
+  let (ppf', finally'), hash =
+    match checksums with
     | None ->
       let out_functions = {
         Format.out_string = (fun _ _ _ -> ());
@@ -81,9 +79,10 @@ let run _quiet cfg filenames output sha256checksums =
         out_spaces = ignore;
         out_indent = ignore;
       } in
-      Format.formatter_of_out_functions out_functions, ignore
-    | Some filename ->
-      ppf_finally_of_filename filename
+      (Format.formatter_of_out_functions out_functions, ignore),
+      (module Digestif.SHA256 : Digestif.S)
+    | Some (hash, filename) ->
+      ppf_finally_of_filename filename, Digestif.module_of_hash' (hash :> Digestif.hash')
   in
   Fun.protect ~finally @@ fun () ->
   Fun.protect ~finally:finally' @@ fun () ->
@@ -93,14 +92,11 @@ let run _quiet cfg filenames output sha256checksums =
       | None -> filename_to_name filename
       | Some name -> name
     in
-    let dgst =
-      Option.map (fun _ -> ref (Digestif.SHA256.init ())) sha256checksums
-    in
-    Fmt.pf ppf "let %s = @[<hov>%a@]\n%!" name (pp cfg dgst) filename;
+    let (module Hash : Digestif.S) = hash in
+    let dgst = Option.map (fun _ -> ref "dummy") checksums in
+    Fmt.pf ppf "let %s = @[<hov>%a@]\n%!" name (pp cfg hash dgst) filename;
     Option.iter (fun dgst ->
-        let dgst = Digestif.SHA256.get !dgst in
-        let dgst = Digestif.SHA256.to_raw_string dgst in
-        Fmt.pf ppf' "let %s = @[<hov>%a@]\n%!" name (Hxd_string.pp cfg) dgst)
+        Fmt.pf ppf' "let %s = @[<hov>%a@]\n%!" name (Hxd_string.pp cfg) !dgst)
       dgst
   in
   List.iter fn filenames
@@ -310,16 +306,47 @@ let output =
   & opt (conv (parser, pp)) None
   & info [ "o"; "output" ] ~doc ~docv:"FILENAME"
 
-let sha256checksums =
-  let doc = "Output OCaml code containing SHA256 checksums for the files." in
+let checksums =
+  let doc = "Output OCaml code containing checksums for the files. \
+             The format is [<hash>:]destination.ml. \
+             The default hash is SHA256." in
   let parser filename =
-    Result.bind (Fpath.of_string filename) (fun _ -> Ok filename)
-  and pp = Fmt.string in
-  Arg.(value & opt (some (conv (parser, pp))) None & info [ "sha256-checksums" ] ~doc ~docv:"FILENAME")
+    let ( let* ) = Result.bind in
+    match String.index_opt filename ':' with
+    | None ->
+      let* _ = Fpath.of_string filename in
+      Ok (`SHA256, filename)
+    | Some idx ->
+      let* hash =
+        let hash = String.sub filename 0 idx in
+        match String.lowercase_ascii hash with
+        | "md5" -> Ok `MD5
+        | "sha1" -> Ok `SHA1
+        | "sha224" -> Ok `SHA224
+        | "sha256" -> Ok `SHA256
+        | "sha384" -> Ok `SHA384
+        | "sha512" -> Ok `SHA512
+        | _ -> Error (`Msg ("Unknown hash: " ^ hash))
+      in
+      let filename = String.sub filename (succ idx) (String.length filename - succ idx) in
+      let* _ = Fpath.of_string filename in
+      Ok (hash, filename)
+  and pp ppf (hash, filename) =
+    let pp_hash ppf = function
+      | `MD5 -> Fmt.string ppf "md5"
+      | `SHA1 -> Fmt.string ppf "sha1"
+      | `SHA224 -> Fmt.string ppf "sha224"
+      | `SHA256 -> Fmt.string ppf "sha256"
+      | `SHA384 -> Fmt.string ppf "sha384"
+      | `SHA512 -> Fmt.string ppf "sha512"
+    in
+    Fmt.pf ppf "%a:%s" pp_hash hash filename
+  in
+  Arg.(value & opt (some (conv (parser, pp))) None & info [ "checksums" ] ~doc ~docv:"FILENAME")
 
 let term =
   let open Term in
-  const run $ setup_logs $ setup_hxd $ setup_filenames $ output $ sha256checksums
+  const run $ setup_logs $ setup_hxd $ setup_filenames $ output $ checksums
 
 let cmd =
   let doc =
