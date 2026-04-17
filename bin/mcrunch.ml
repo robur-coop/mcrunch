@@ -17,12 +17,11 @@ module Sched = Hxd.Make (struct type +'a t = 'a end)
 let sched = { Hxd.bind= (fun x fn -> fn (Sched.prj x)); return= Sched.inj }
 let lseek = { Hxd.lseek= (fun _ _ _ -> Sched.inj (Ok 0)) }
 
-let pp cfg (module Hash : Digestif.S) out ppf filename =
+let pp cfg hs ppf filename =
   let ic = open_in_bin filename in
   let finally () = close_in ic in
   Fun.protect ~finally @@ fun () ->
   let max = in_channel_length ic in
-  let dgst = ref (Hash.init ()) in
   if max > 0xffff (* 65535 *)
   then
     let pp ppf () =
@@ -30,15 +29,14 @@ let pp cfg (module Hash : Digestif.S) out ppf filename =
         let len = Int.min (max - !pos) len in
         let len = input ic buf off len in
         pos := !pos + len;
-        dgst := Hash.feed_bytes !dgst
-            ~off ~len buf;
+        List.iter (fun h -> h#feed_bytes ~off ~len buf) hs;
         Sched.inj (Ok len) in
       let send _ _ ~off:_ ~len = Sched.inj (Ok len) in
       let seek = `Relative 0 in
       let v = Hxd.generate cfg sched recv send (ic, ref 0) () lseek seek ppf in
       match Sched.prj v with
-      | Ok () -> Option.iter (fun out -> out := Hash.get !dgst|> Hash.to_raw_string) out
-      | Error _ -> Option.iter (fun out -> out := Hash.get !dgst|> Hash.to_raw_string) out in
+      | Ok () -> List.iter (fun h -> h#fin) hs
+      | Error _ -> List.iter (fun h -> h#fin) hs in
     Fmt.pf ppf "@[<hov>%a@]" pp ()
   else
     let tmp = Bytes.create 0x7ff in
@@ -52,10 +50,18 @@ let pp cfg (module Hash : Digestif.S) out ppf filename =
       | exception End_of_file -> Buffer.contents buf
     in
     let str = go () in
-    dgst := Hash.feed_string !dgst
-        str;
-    Option.iter (fun out -> out := Hash.get !dgst|> Hash.to_raw_string) out;
+    List.iter (fun h ->
+        h#feed_string str;
+        h#fin)
+      hs;
     Fmt.pf ppf "@[<hov>%a@]" (Hxd_string.pp cfg) str
+
+let rec protects ~finallies work =
+  match finallies with
+  | [] -> work ()
+  | finally :: finallies ->
+    Fun.protect ~finally @@ fun () ->
+    protects ~finallies work
 
 let run _quiet cfg filenames output checksums =
   let ppf_finally_of_filename filename =
@@ -69,35 +75,36 @@ let run _quiet cfg filenames output checksums =
     | None -> (Fmt.stdout, ignore)
     | Some filename -> ppf_finally_of_filename filename
   in
-  let (ppf', finally'), hash =
-    match checksums with
-    | None ->
-      let out_functions = {
-        Format.out_string = (fun _ _ _ -> ());
-        out_flush = ignore;
-        out_newline = ignore;
-        out_spaces = ignore;
-        out_indent = ignore;
-      } in
-      (Format.formatter_of_out_functions out_functions, ignore),
-      (module Digestif.SHA256 : Digestif.S)
-    | Some (hash, filename) ->
-      ppf_finally_of_filename filename, Digestif.module_of_hash' (hash :> Digestif.hash')
+  let finallies, hs =
+    List.fold_left (fun (finallies, hs) (hash, filename) ->
+        let (module H : Digestif.S) = Digestif.module_of_hash' (hash :> Digestif.hash') in
+        let ppf, finally = ppf_finally_of_filename filename in
+        finally :: finallies,
+        (fun name ->
+           object
+             val mutable ctx = H.init ()
+             method feed_string s =
+               ctx <- H.feed_string ctx s
+             method feed_bytes ~off ~len buf =
+               ctx <- H.feed_bytes ctx buf ~off ~len
+             method fin =
+               let hash = H.get ctx |> H.to_raw_string in
+               Fmt.pf ppf "let %s = @[<hov>%a@]\n%!" name (Hxd_string.pp cfg) hash
+           end) :: hs
+      )
+      ([], [])
+      checksums
   in
   Fun.protect ~finally @@ fun () ->
-  Fun.protect ~finally:finally' @@ fun () ->
+  protects ~finallies @@ fun () ->
   let fn (filename, name) =
     let name =
       match name with
       | None -> filename_to_name filename
       | Some name -> name
     in
-    let (module Hash : Digestif.S) = hash in
-    let dgst = Option.map (fun _ -> ref "dummy") checksums in
-    Fmt.pf ppf "let %s = @[<hov>%a@]\n%!" name (pp cfg hash dgst) filename;
-    Option.iter (fun dgst ->
-        Fmt.pf ppf' "let %s = @[<hov>%a@]\n%!" name (Hxd_string.pp cfg) !dgst)
-      dgst
+    let hs = List.map (fun h -> h name) hs in
+    Fmt.pf ppf "let %s = @[<hov>%a@]\n%!" name (pp cfg hs) filename;
   in
   List.iter fn filenames
 
@@ -342,7 +349,7 @@ let checksums =
     in
     Fmt.pf ppf "%a:%s" pp_hash hash filename
   in
-  Arg.(value & opt (some (conv (parser, pp))) None & info [ "checksums" ] ~doc ~docv:"FILENAME")
+  Arg.(value & opt_all (conv (parser, pp)) [] & info [ "checksums" ] ~doc ~docv:"FILENAME")
 
 let term =
   let open Term in
