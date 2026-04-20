@@ -56,12 +56,10 @@ let pp cfg hs ppf filename =
       hs;
     Fmt.pf ppf "@[<hov>%a@]" (Hxd_string.pp cfg) str
 
-let rec protects ~finallies work =
-  match finallies with
-  | [] -> work ()
-  | finally :: finallies ->
-    Fun.protect ~finally @@ fun () ->
-    protects ~finallies work
+let protects ~finallies work =
+  List.fold_right (fun finally work () ->
+      Fun.protect ~finally work)
+    finallies work ()
 
 let run _quiet cfg filenames output checksums =
   let ppf_finally_of_filename filename =
