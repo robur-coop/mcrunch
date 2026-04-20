@@ -74,10 +74,10 @@ let run _quiet cfg filenames output checksums =
     | Some filename -> ppf_finally_of_filename filename
   in
   let finallies, hs =
-    List.fold_left (fun (finallies, hs) (hash, filename) ->
+    List.map (fun (hash, filename) ->
         let (module H : Digestif.S) = Digestif.module_of_hash' (hash :> Digestif.hash') in
         let ppf, finally = ppf_finally_of_filename filename in
-        finally :: finallies,
+        finally,
         (fun name ->
            object
              val mutable ctx = H.init ()
@@ -88,10 +88,9 @@ let run _quiet cfg filenames output checksums =
              method fin =
                let hash = H.get ctx |> H.to_raw_string in
                Fmt.pf ppf "let %s = @[<hov>%a@]\n%!" name (Hxd_string.pp cfg) hash
-           end) :: hs
-      )
-      ([], [])
+           end))
       checksums
+    |> List.split
   in
   Fun.protect ~finally @@ fun () ->
   protects ~finallies @@ fun () ->
