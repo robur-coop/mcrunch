@@ -23,3 +23,6 @@
   Comments are not supported for string output. Not outputting comments.
   $ cat t.ml
   let foo = "\x66\x6f\x6f\x0a"
+  $ touch empty
+  $ mcrunch --file empty:empty
+  let empty = [||]

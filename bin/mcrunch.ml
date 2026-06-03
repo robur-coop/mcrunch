@@ -22,7 +22,13 @@ let pp cfg hs ppf filename =
   let finally () = close_in ic in
   Fun.protect ~finally @@ fun () ->
   let max = in_channel_length ic in
-  if max > 0xffff (* 65535 *)
+  if max <= 0 then
+    match Hxd.is_caml cfg with
+    | Some `Array -> Fmt.pf ppf "[||]"
+    | Some `List -> Fmt.pf ppf "[]"
+    | Some `String -> Fmt.pf ppf "\"\""
+    | None -> assert false
+  else if max > 0xffff (* 65535 *)
   then
     let pp ppf () =
       let recv (ic, pos) buf ~off ~len =
