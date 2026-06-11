@@ -1,3 +1,9 @@
+### v0.0.3 (2026-06-11)
+
+- Be able to handle empty files (@dinosaure, [!6][6])
+
+[6]: https://git.robur.coop/robur/mcrunch/pulls/6
+
 ### v0.0.2 (2026-04-21)
 
 - Be able to emit checksums from files (@reynir, @dinosaure, [!3][3])
