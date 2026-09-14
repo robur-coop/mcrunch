@@ -1,2 +1,2 @@
 (cram
- (deps %{bin:mcrunch}))
+ (deps %{bin:mcrunch} sha256sum.ml md5sum.ml))
