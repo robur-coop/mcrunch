@@ -55,12 +55,11 @@ $ mcrunch -f -:path:to:file
 * `-e`, `--ext EXTENSION` restricts `--directory` to the files carrying this
   extension. The leading `.` is optional. This option can be repeated. Without
   it, every file is crunched.
-* `--lookup [NAME]` also emits a function mapping each crunched filename to its
+* `--lookup=NAME` also emits a function mapping each crunched filename to its
   contents, so that they can be reached by name at run-time rather than through
-  the bindings `mcrunch` infers. It is called `read` unless `NAME` says
-  otherwise, and returns an `option`. In this mode `mcrunch` names the bindings
-  of the files given without an explicit name itself, so their filenames no
-  longer have to be usable as OCaml identifiers.
+  the bindings `mcrunch` infers. The function **NAME** returns an _option_. In
+  this mode, it is possible to associate a file with its name even if the latter
+  cannot be _ocamlify_ (as an OCaml identifier).
 * `-o`, `--output FILENAME` writes the output to the given file instead of
   stdout. The file must not already exist. Use `-` for stdout (the default).
 * `-a`, `--array` serializes each file's contents as an array of strings. This
