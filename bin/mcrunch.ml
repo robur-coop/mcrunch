@@ -7,7 +7,7 @@ let to_underscore = function
 let no_colon str =
   String.exists (function '-' -> true | _ -> false) str |> Bool.not
 
-let filename_to_name filename =
+let filename_to_ocaml_name filename =
   let tmp = Bytes.create (String.length filename) in
   for idx = 0 to String.length filename - 1 do
     if to_underscore filename.[idx] then Bytes.set tmp idx '_'
@@ -126,18 +126,25 @@ let non_existing_filename filename =
   if Sys.file_exists filename then error_msgf "%s already exists" filename
   else Ok ()
 
-let safe_filename_as_name filename =
+let is_ocaml_safe str =
   let fn0 = function 'a' .. 'z' | '_' -> true | _ -> false in
   let fn1 = function
     | 'A' .. 'Z' | '0' .. '9' | '\'' -> true
     | chr -> fn0 chr || to_underscore chr
   in
-  if
-    String.length filename > 0
-    && fn0 filename.[0]
-    && String.for_all fn1 filename
+  String.length str > 0
+  && fn0 str.[0]
+  && String.for_all fn1 str
+
+let safe_filename_as_ocaml_name filename =
+  if is_ocaml_safe filename
   then Ok ()
-  else error_msgf "%s is not a safe filename" filename
+  else error_msgf "%s is not a safe filename for OCaml" filename
+
+let safe_ocaml_name name =
+  if is_ocaml_safe name
+  then Ok ()
+  else error_msgf "%s is not a safe OCaml name" name
 
 let has_extension exts filename =
   match exts with
@@ -146,33 +153,21 @@ let has_extension exts filename =
       let extension = Filename.extension filename in
       List.exists (fun ext -> String.equal ext extension) exts
 
-(* Entries are sorted so that the generated module only depends on the contents
-   of the directory, not on the order the file-system happens to return it in. *)
 let rec fold_directory exts fn acc directory =
   let entries = Sys.readdir directory in
   Array.sort String.compare entries;
-  Array.fold_left
-    (fun acc entry ->
-      let filename = Filename.concat directory entry in
-      if Sys.is_directory filename then fold_directory exts fn acc filename
-      else if Sys.is_regular_file filename && has_extension exts filename then
-        fn acc filename
-      else acc)
-    acc entries
+  let fn acc entry =
+    let filename = Filename.concat directory entry in
+    if Sys.is_directory filename then fold_directory exts fn acc filename
+    else if Sys.is_regular_file filename && has_extension exts filename then
+      fn acc filename
+    else acc in
+  Array.fold_left fn acc entries
 
 let filenames_of_directory exts directory =
-  fold_directory exts (fun acc filename -> (filename, None) :: acc) [] directory
+  let fn acc filename = (filename, None) :: acc in
+  fold_directory exts fn [] directory
   |> List.rev
-
-let safe_name name =
-  let fn0 = function 'a' .. 'z' | '_' -> true | _ -> false in
-  let fn1 = function
-    | 'A' .. 'Z' | '0' .. '9' | '\'' -> true
-    | chr -> fn0 chr
-  in
-  if String.length name > 0 && fn0 name.[0] && String.for_all fn1 name then
-    Ok ()
-  else error_msgf "%s is not a safe name" name
 
 open Cmdliner
 
@@ -190,7 +185,7 @@ let parser_of_arg str =
   | name :: filename ->
       let filename = String.concat ":" filename in
       let* () = existing_filename filename in
-      let* () = safe_name name in
+      let* () = safe_ocaml_name name in
       Ok (filename, Some name)
 
 let pp_of_arg ppf = function
@@ -199,33 +194,42 @@ let pp_of_arg ppf = function
       else Fmt.pf ppf "-:%s" filename
   | filename, Some name -> Fmt.pf ppf "%s:%s" name filename
 
-(* A file given without an explicit name is reached through the binding named
-   after it, so its filename has to be usable as an OCaml identifier.
-   With a lookup function, the contents are reached by filename instead, so we
-   are free to name the bindings ourselves and any filename will do. *)
-let resolve_name lookup idx (filename, name) =
+let default : (int -> string, Format.formatter, unit, string) format4 = "d_%d"
+
+let fmt : (int -> string, Format.formatter, unit, string) format4 Term.t =
+  let doc = "The format of OCaml bindings." in
+  let parser str =
+    let proof = CamlinternalFormatBasics.(Int_ty End_of_fmtty) in
+    try let fmt = CamlinternalFormat.format_of_string_fmtty str proof in
+        if is_ocaml_safe (Fmt.str fmt 0)
+        then Ok fmt
+        else error_msgf "Invalid format: it does not produce a safe OCaml binding"
+    with _ -> error_msgf "Invalid format: %S" str in
+  let pp ppf (CamlinternalFormatBasics.Format (_, str)) = Fmt.pf ppf "%S" str in
+  let fmt = Arg.conv (parser, pp) in
+  let open Arg in
+  value & opt fmt default & info [ "format" ] ~doc ~docv:"FMT"
+
+let resolve_name fmt lookup idx (filename, name) =
   let ( let* ) = Result.bind in
   match (name, lookup) with
   | Some name, _ -> Ok (filename, name)
-  | None, Some _ -> Ok (filename, Fmt.str "d_%d" idx)
+  | None, Some _ -> Ok (filename, Fmt.str fmt idx)
   | None, None ->
-      let* () = safe_filename_as_name filename in
-      Ok (filename, filename_to_name filename)
+      let* () = safe_filename_as_ocaml_name filename in
+      Ok (filename, filename_to_ocaml_name filename)
 
-let setup_filenames lookup filenames directories exts =
+let setup_filenames fmt lookup filenames directories exts =
   let ( let* ) = Result.bind in
-  let filenames =
-    filenames
-    @ List.concat_map (filenames_of_directory exts) directories
-  in
+  let filenames = filenames @ List.concat_map (filenames_of_directory exts) directories in
   let* filenames =
     List.fold_left
-      (fun acc filename ->
-        let* acc = acc in
-        let* filename = resolve_name lookup (List.length acc) filename in
-        Ok (filename :: acc))
-      (Ok []) filenames
-    |> Result.map List.rev
+      (fun value filename ->
+        let* acc, idx = value in
+        let* filename = resolve_name fmt lookup idx filename in
+        Ok (filename :: acc, succ idx))
+      (Ok ([], 0)) filenames
+    |> Result.map (Fun.compose List.rev fst)
   in
   let rec has_duplicate = function
     | [] -> false
@@ -286,26 +290,24 @@ let lookup =
   let doc =
     "Also emit a function mapping each crunched filename to its contents, so \
      that they can be reached by name at run-time instead of through the \
-     bindings $(tname) infers. The function is called $(i,read) unless \
-     $(i,NAME) says otherwise, and returns an $(i,option). In this mode \
-     $(tname) names the bindings of the files given without an explicit name \
-     itself, which lifts the restriction that such a filename must be usable \
-     as an OCaml identifier."
+     bindings $(tname) infers. The function $(b,NAME) returns an $(i,option). \
+     In this mode, it is possible to associate a file with its name even if \
+     the latter cannot be $(i,ocamlify) (as an OCaml identifier)."
   in
   let ( let* ) = Result.bind in
   let parser name =
-    let* () = safe_name name in
+    let* () = safe_ocaml_name name in
     Ok name
   in
   let open Arg in
   value
-  & opt ~vopt:(Some "read") (some (conv (parser, Fmt.string))) None
+  & opt (some (conv (parser, Fmt.string))) None
   & info [ "lookup" ] ~doc ~docv:"NAME"
 
 let setup_filenames =
   let open Term in
   term_result ~usage:false
-    (const setup_filenames $ lookup $ filenames $ directories $ exts)
+    (const setup_filenames $ fmt $ lookup $ filenames $ directories $ exts)
 
 let output_options = "OUTPUT OPTIONS"
 
