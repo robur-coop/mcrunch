@@ -1,0 +1,25 @@
+name: mcrunch
+on: [push, pull_request]
+jobs:
+  tests:
+    name: Tests
+    strategy:
+      matrix:
+        ocaml-version: [5.2, 5.3, 5.4]
+        operating-system: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.operating-system }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Use OCaml ${{ matrix.ocaml-version }}
+        uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+          opam-local-packages: |
+            *.opam
+      - name: Install dependencies
+        run: opam install --deps-only -t mcrunch
+      - name: Build
+        run: opam exec -- dune build -p mcrunch
+      - name: Test
+        run: opam exec -- dune runtest -p mcrunch
