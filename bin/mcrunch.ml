@@ -7,6 +7,15 @@ let to_underscore = function
 let no_colon str =
   String.exists (function '-' -> true | _ -> false) str |> Bool.not
 
+let normalize ?sep:((isep, osep)= (Filename.dir_sep.[0], '/')) str =
+  let buf = Bytes.create (String.length str) in
+  for idx = 0 to String.length str - 1 do
+    if str.[idx] = isep
+    then Bytes.set buf idx osep
+    else Bytes.set buf idx str.[idx]
+  done;
+  Bytes.unsafe_to_string buf
+
 let filename_to_ocaml_name filename =
   let tmp = Bytes.create (String.length filename) in
   for idx = 0 to String.length filename - 1 do
@@ -112,14 +121,16 @@ let run _quiet cfg (lookup, filenames) output checksums =
   | None -> ()
   | Some lookup ->
       Fmt.pf ppf "\nlet %s = function\n" lookup;
-      List.iter
-        (fun (filename, name) ->
-          Fmt.pf ppf "  | %S -> Some %s\n" filename name)
-        filenames;
+      let sep = Filename.dir_sep.[0], '/' in
+      let fn (filename, name) =
+        let filename = normalize ~sep filename in
+        Fmt.pf ppf "  | %S -> Some %s\n" filename name in
+      List.iter fn filenames;
       Fmt.pf ppf "  | _ -> None\n%!"
 
 let existing_filename filename =
-  if Sys.is_regular_file filename then Ok ()
+  let sep = ('/', Filename.dir_sep.[0]) in
+  if Sys.is_regular_file (normalize ~sep filename) then Ok ()
   else error_msgf "%s does not exist" filename
 
 let non_existing_filename filename =
