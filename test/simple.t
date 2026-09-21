@@ -26,3 +26,9 @@
   $ touch empty
   $ mcrunch --file empty:empty
   let empty = [||]
+  $ echo "nine" > 9lives.txt
+  $ mcrunch --file=9lives.txt
+  mcrunch: 9lives.txt is not a safe filename for OCaml
+  [124]
+  $ mcrunch --file=nine:9lives.txt
+  let nine = [| "\x6e\x69\x6e\x65\x0a" |]

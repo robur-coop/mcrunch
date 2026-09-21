@@ -47,6 +47,19 @@ $ mcrunch -f -:path:to:file
 * `-f`, `--file [NAME|-:]FILENAME` specifies a file to crunch. This option can
   be repeated to include multiple files. An optional name can be given before
   the filename, separated by `:`.
+* `-d`, `--directory DIRECTORY` specifies a directory to crunch. It is walked
+  recursively and every regular file found is crunched as if it had been given
+  with `--file`, the path walked to it — `DIRECTORY` included — being used to
+  infer the OCaml name. Entries are visited in a stable order, so the output
+  only depends on the contents of the directory. This option can be repeated.
+* `-e`, `--ext EXTENSION` restricts `--directory` to the files carrying this
+  extension. The leading `.` is optional. This option can be repeated. Without
+  it, every file is crunched.
+* `--lookup=NAME` also emits a function mapping each crunched filename to its
+  contents, so that they can be reached by name at run-time rather than through
+  the bindings `mcrunch` infers. The function **NAME** returns an _option_. In
+  this mode, it is possible to associate a file with its name even if the latter
+  cannot be _ocamlify_ (as an OCaml identifier).
 * `-o`, `--output FILENAME` writes the output to the given file instead of
   stdout. The file must not already exist. Use `-` for stdout (the default).
 * `-a`, `--array` serializes each file's contents as an array of strings. This
@@ -88,3 +101,30 @@ The resulting `static.ml` contains two bindings, `index_html` and `style_css`,
 each holding the full file contents as a string array. You can then reference
 these values from your OCaml program and reconstruct the original content with
 `String.concat ""` (for arrays, `Array.to_list` first).
+
+A whole tree of assets can be embedded at once, optionally restricted to some
+extensions:
+
+```bash
+$ mcrunch -d static -e html -e css -o static.ml
+let static_index_html = [| … |]
+let static_style_css = [| … |]
+```
+
+When the file to serve is only known at run-time, `--lookup` gives the module a
+function to reach it by path, and lets `mcrunch` name the bindings so that any
+filename can be crunched:
+
+```bash
+$ mcrunch -d static -s --lookup -o static.ml
+let d_0 = "…"
+let d_1 = "…"
+
+let read = function
+  | "static/index.html" -> Some d_0
+  | "static/style.css" -> Some d_1
+  | _ -> None
+```
+
+With `--string`, `read` hands back the string literal itself: nothing is
+concatenated or copied, and the contents stay where the linker put them.
