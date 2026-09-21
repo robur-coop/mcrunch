@@ -1,7 +1,7 @@
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 
 let to_underscore = function
-  | '.' | '%' | '!' | '?' | ':' | '/' -> true
+  | '.' | '%' | '!' | '?' | ':' -> true
   | _ -> false
 
 let no_colon str =
@@ -21,7 +21,7 @@ let sched = { Hxd.bind= (fun x fn -> fn (Sched.prj x)); return= Sched.inj }
 let lseek = { Hxd.lseek= (fun _ _ _ -> Sched.inj (Ok 0)) }
 
 let pp cfg hs ppf filename =
-  let ic = open_in_bin filename in
+  let ic = open_in_bin (Fpath.to_string filename) in
   let finally () = close_in ic in
   Fun.protect ~finally @@ fun () ->
   let max = in_channel_length ic in
@@ -72,7 +72,7 @@ let protects ~finallies work =
 
 let run _quiet cfg (lookup, filenames) output checksums =
   let ppf_finally_of_filename filename =
-    let oc = open_out_bin filename in
+    let oc = open_out_bin (Fpath.to_string filename) in
     let ppf = Format.formatter_of_out_channel oc in
     let finally () = close_out oc in
     (ppf, finally)
@@ -112,24 +112,26 @@ let run _quiet cfg (lookup, filenames) output checksums =
   | None -> ()
   | Some lookup ->
       Fmt.pf ppf "\nlet %s = function\n" lookup;
-      List.iter
-        (fun (filename, name) ->
-          Fmt.pf ppf "  | %S -> Some %s\n" filename name)
-        filenames;
+      let fn (filename, name) =
+        let filename = Fpath.segs filename in
+        let filename = String.concat "/" filename in
+        Fmt.pf ppf "  | %S -> Some %s\n" filename name in
+      List.iter fn filenames;
       Fmt.pf ppf "  | _ -> None\n%!"
 
 let existing_filename filename =
-  if Sys.is_regular_file filename then Ok ()
-  else error_msgf "%s does not exist" filename
+  if Sys.is_regular_file (Fpath.to_string filename) then Ok ()
+  else error_msgf "%a does not exist" Fpath.pp filename
 
 let non_existing_filename filename =
-  if Sys.file_exists filename then error_msgf "%s already exists" filename
+  if Sys.file_exists (Fpath.to_string filename)
+  then error_msgf "%a already exists" Fpath.pp filename
   else Ok ()
 
 let is_ocaml_safe str =
   let fn0 = function 'a' .. 'z' | '_' -> true | _ -> false in
   let fn1 = function
-    | 'A' .. 'Z' | '0' .. '9' | '\'' -> true
+    | 'A' .. 'Z' | '0' .. '9' -> true
     | chr -> fn0 chr || to_underscore chr
   in
   String.length str > 0
@@ -150,16 +152,18 @@ let has_extension exts filename =
   match exts with
   | [] -> true
   | exts ->
-      let extension = Filename.extension filename in
+      let extension = Fpath.get_ext ~multi:false filename in
       List.exists (fun ext -> String.equal ext extension) exts
 
 let rec fold_directory exts fn acc directory =
-  let entries = Sys.readdir directory in
+  let entries = Sys.readdir (Fpath.to_string directory) in
   Array.sort String.compare entries;
   let fn acc entry =
-    let filename = Filename.concat directory entry in
-    if Sys.is_directory filename then fold_directory exts fn acc filename
-    else if Sys.is_regular_file filename && has_extension exts filename then
+    let filename = Fpath.(directory / entry) in
+    if Sys.is_directory (Fpath.to_string filename)
+    then fold_directory exts fn acc (Fpath.to_dir_path filename)
+    else if Sys.is_regular_file (Fpath.to_string filename)
+         && has_extension exts filename then
       fn acc filename
     else acc in
   Array.fold_left fn acc entries
@@ -176,23 +180,27 @@ let parser_of_arg str =
   match String.split_on_char ':' str with
   | [] -> assert false
   | [ filename ] ->
+      let* filename = Fpath.of_string filename in
       let* () = existing_filename filename in
       Ok (filename, None)
   | "-" :: filename ->
       let filename = String.concat ":" filename in
+      let* filename = Fpath.of_string filename in
       let* () = existing_filename filename in
       Ok (filename, None)
   | name :: filename ->
       let filename = String.concat ":" filename in
+      let* filename = Fpath.of_string filename in
       let* () = existing_filename filename in
       let* () = safe_ocaml_name name in
       Ok (filename, Some name)
 
 let pp_of_arg ppf = function
   | filename, None ->
-      if no_colon filename then Fmt.string ppf filename
-      else Fmt.pf ppf "-:%s" filename
-  | filename, Some name -> Fmt.pf ppf "%s:%s" name filename
+      if no_colon (Fpath.to_string filename)
+      then Fpath.pp ppf filename
+      else Fmt.pf ppf "-:%a" Fpath.pp filename
+  | filename, Some name -> Fmt.pf ppf "%s:%a" name Fpath.pp filename
 
 let default : (int -> string, Format.formatter, unit, string) format4 = "d_%d"
 
@@ -216,8 +224,11 @@ let resolve_name fmt lookup idx (filename, name) =
   | Some name, _ -> Ok (filename, name)
   | None, Some _ -> Ok (filename, Fmt.str fmt idx)
   | None, None ->
-      let* () = safe_filename_as_ocaml_name filename in
-      Ok (filename, filename_to_ocaml_name filename)
+      let filename = Fpath.normalize filename in
+      let segs = Fpath.segs filename in
+      let segs = String.concat "_" segs in
+      let* () = safe_filename_as_ocaml_name segs in
+      Ok (filename, filename_to_ocaml_name segs)
 
 let setup_filenames fmt lookup filenames directories exts =
   let ( let* ) = Result.bind in
@@ -256,6 +267,7 @@ let filenames =
   & info [ "f"; "file" ] ~doc ~docv:"[NAME|-:]FILENAME"
 
 let directories =
+  let ( let* ) = Result.bind in
   let doc =
     "A directory to $(i,crunch) into the OCaml output file. It is walked \
      recursively and every regular file found is crunched as if it was given \
@@ -264,12 +276,14 @@ let directories =
      repeated."
   in
   let parser directory =
-    if Sys.file_exists directory && Sys.is_directory directory then Ok directory
+    if Sys.file_exists directory && Sys.is_directory directory
+    then let* directory = Fpath.of_string directory in
+         Ok (Fpath.to_dir_path directory)
     else error_msgf "%s is not a directory" directory
   in
   let open Arg in
   value
-  & opt_all (conv (parser, Fmt.string)) []
+  & opt_all (conv (parser, Fpath.pp)) []
   & info [ "d"; "directory" ] ~doc ~docv:"DIRECTORY"
 
 let exts =
@@ -412,13 +426,13 @@ let output =
   let parser = function
     | "-" -> Ok None
     | filename ->
-        let* _ = Fpath.of_string filename in
+        let* filename = Fpath.of_string filename in
         let* () = non_existing_filename filename in
         Ok (Some filename)
   in
   let pp ppf = function
     | None -> Fmt.string ppf "-"
-    | Some filename -> Fmt.string ppf filename
+    | Some filename -> Fpath.pp ppf filename
   in
   let open Arg in
   value
@@ -433,7 +447,7 @@ let checksums =
     let ( let* ) = Result.bind in
     match String.index_opt filename ':' with
     | None ->
-      let* _ = Fpath.of_string filename in
+      let* filename = Fpath.of_string filename in
       Ok (`SHA256, filename)
     | Some idx ->
       let* hash =
@@ -448,7 +462,7 @@ let checksums =
         | _ -> Error (`Msg ("Unknown hash: " ^ hash))
       in
       let filename = String.sub filename (succ idx) (String.length filename - succ idx) in
-      let* _ = Fpath.of_string filename in
+      let* filename = Fpath.of_string filename in
       Ok (hash, filename)
   and pp ppf (hash, filename) =
     let pp_hash ppf = function
@@ -459,7 +473,7 @@ let checksums =
       | `SHA384 -> Fmt.string ppf "sha384"
       | `SHA512 -> Fmt.string ppf "sha512"
     in
-    Fmt.pf ppf "%a:%s" pp_hash hash filename
+    Fmt.pf ppf "%a:%a" pp_hash hash Fpath.pp filename
   in
   Arg.(value & opt_all (conv (parser, pp)) [] & info [ "checksums" ] ~doc ~docv:"FILENAME")
 
