@@ -1,8 +1,8 @@
 let error_msgf fmt = Fmt.kstr (fun msg -> Error (`Msg msg)) fmt
 
 let to_underscore = function
-  | '.' | '%' | '!' | '?' | ':' | '/' -> true
-  | _ -> false
+  | '.' | '%' | '!' | '?' | ':' -> true
+  | chr -> chr = Filename.dir_sep.[0]
 
 let no_colon str =
   String.exists (function '-' -> true | _ -> false) str |> Bool.not
@@ -129,7 +129,8 @@ let non_existing_filename filename =
 let is_ocaml_safe str =
   let fn0 = function 'a' .. 'z' | '_' -> true | _ -> false in
   let fn1 = function
-    | 'A' .. 'Z' | '0' .. '9' | '\'' -> true
+    | 'A' .. 'Z' | '0' .. '9' -> true
+    | chr when chr = Filename.dir_sep.[0] -> true
     | chr -> fn0 chr || to_underscore chr
   in
   String.length str > 0
