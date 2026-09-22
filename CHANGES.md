@@ -1,3 +1,9 @@
+### v0.0.5 (2026-09-22)
+
+- Fix finally the support of Windows (@dinosaure, [!10][10])
+
+[10]: https://git.robur.coop/robur/mcrunch/pulls/10
+
 ### v0.0.4 (2026-09-21)
 
 - Add the lookup feature (@toots, @dinosaure, [#5][gh5])
